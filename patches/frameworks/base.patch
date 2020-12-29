@@ -1,0 +1,1522 @@
+From 08082f41f00c4676426e9fc484c9ec250a2d1cb4 Mon Sep 17 00:00:00 2001
+From: adi766 <adityakumarteli7846@gmail.com>
+Date: Sat, 23 Sep 2017 16:46:42 +0000
+Subject: [PATCH 01/14] Fix Graphics
+
+---
+ core/java/android/app/ActivityThread.java     |   6 +-
+ core/java/android/os/GraphicsEnvironment.java | 112 ------------------
+ core/jni/Android.mk                           |   1 -
+ core/jni/AndroidRuntime.cpp                   |   2 -
+ core/jni/android_os_GraphicsEnvironment.cpp   |  44 -------
+ 5 files changed, 2 insertions(+), 163 deletions(-)
+ delete mode 100644 core/java/android/os/GraphicsEnvironment.java
+ delete mode 100644 core/jni/android_os_GraphicsEnvironment.cpp
+
+diff --git a/core/java/android/app/ActivityThread.java b/core/java/android/app/ActivityThread.java
+index eb257c59b5c2..2139483ed383 100644
+--- a/core/java/android/app/ActivityThread.java
++++ b/core/java/android/app/ActivityThread.java
+@@ -62,7 +62,6 @@
+ import android.os.Debug;
+ import android.os.DropBoxManager;
+ import android.os.Environment;
+-import android.os.GraphicsEnvironment;
+ import android.os.Handler;
+ import android.os.IBinder;
+ import android.os.LocaleList;
+@@ -5049,7 +5048,7 @@ final void handleTrimMemory(int level) {
+         WindowManagerGlobal.getInstance().trimMemory(level);
+     }
+ 
+-    private void setupGraphicsSupport(Context context, File cacheDir) {
++    private void setupGraphicsSupport(LoadedApk info, File cacheDir) {
+         if (Process.isIsolated()) {
+             // Isolated processes aren't going to do UI.
+             return;
+@@ -5062,7 +5061,6 @@ private void setupGraphicsSupport(Context context, File cacheDir) {
+             if (packages != null) {
+                 ThreadedRenderer.setupDiskCache(cacheDir);
+                 RenderScriptCacheDir.setupDiskCache(cacheDir);
+-                GraphicsEnvironment.setupGraphicsEnvironment(context);
+             }
+         } catch (RemoteException e) {
+             throw e.rethrowFromSystemServer();
+@@ -5357,7 +5355,7 @@ private void handleBindApplication(AppBindData data) {
+             final Context deviceContext = appContext.createDeviceProtectedStorageContext();
+             final File codeCacheDir = deviceContext.getCodeCacheDir();
+             if (codeCacheDir != null) {
+-                setupGraphicsSupport(appContext, codeCacheDir);
++                setupGraphicsSupport(data.info, codeCacheDir);
+             } else {
+                 Log.e(TAG, "Unable to setupGraphicsSupport due to missing code-cache directory");
+             }
+diff --git a/core/java/android/os/GraphicsEnvironment.java b/core/java/android/os/GraphicsEnvironment.java
+deleted file mode 100644
+index e4cdbce09796..000000000000
+--- a/core/java/android/os/GraphicsEnvironment.java
++++ /dev/null
+@@ -1,112 +0,0 @@
+-/*
+- * Copyright 2016 The Android Open Source Project
+- *
+- * Licensed under the Apache License, Version 2.0 (the "License");
+- * you may not use this file except in compliance with the License.
+- * You may obtain a copy of the License at
+- *
+- *      http://www.apache.org/licenses/LICENSE-2.0
+- *
+- * Unless required by applicable law or agreed to in writing, software
+- * distributed under the License is distributed on an "AS IS" BASIS,
+- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- * See the License for the specific language governing permissions and
+- * limitations under the License.
+- */
+-
+-package android.os;
+-
+-import android.content.Context;
+-import android.content.pm.ApplicationInfo;
+-import android.content.pm.PackageManager;
+-import android.opengl.EGL14;
+-import android.os.SystemProperties;
+-import android.util.Log;
+-
+-import dalvik.system.VMRuntime;
+-
+-import java.io.File;
+-
+-/** @hide */
+-public final class GraphicsEnvironment {
+-
+-    private static final boolean DEBUG = false;
+-    private static final String TAG = "GraphicsEnvironment";
+-    private static final String PROPERTY_GFX_DRIVER = "ro.gfx.driver.0";
+-
+-    public static void setupGraphicsEnvironment(Context context) {
+-        chooseDriver(context);
+-
+-        // Now that we've figured out which driver to use for this process, load and initialize it.
+-        // This can take multiple frame periods, and it would otherwise happen as part of the first
+-        // frame, increasing first-frame latency. Starting it here, as a low-priority background
+-        // thread, means that it's usually done long before we start drawing the first frame,
+-        // without significantly disrupting other activity launch work.
+-        Thread eglInitThread = new Thread(
+-                () -> {
+-                    EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY);
+-                },
+-                "EGL Init");
+-        eglInitThread.start();
+-    }
+-
+-    private static void chooseDriver(Context context) {
+-        String driverPackageName = SystemProperties.get(PROPERTY_GFX_DRIVER);
+-        if (driverPackageName == null || driverPackageName.isEmpty()) {
+-            return;
+-        }
+-        // To minimize risk of driver updates crippling the device beyond user repair, never use an
+-        // updated driver for privileged or non-updated system apps. Presumably pre-installed apps
+-        // were tested thoroughly with the pre-installed driver.
+-        ApplicationInfo ai = context.getApplicationInfo();
+-        if (ai.isPrivilegedApp() || (ai.isSystemApp() && !ai.isUpdatedSystemApp())) {
+-            if (DEBUG) Log.v(TAG, "ignoring driver package for privileged/non-updated system app");
+-            return;
+-        }
+-        ApplicationInfo driverInfo;
+-        try {
+-            driverInfo = context.getPackageManager().getApplicationInfo(driverPackageName,
+-                    PackageManager.MATCH_SYSTEM_ONLY);
+-        } catch (PackageManager.NameNotFoundException e) {
+-            Log.w(TAG, "driver package '" + driverPackageName + "' not installed");
+-            return;
+-        }
+-        String abi = chooseAbi(driverInfo);
+-        if (abi == null) {
+-            if (DEBUG) {
+-                // This is the normal case for the pre-installed empty driver package, don't spam
+-                if (driverInfo.isUpdatedSystemApp()) {
+-                    Log.w(TAG, "updated driver package has no compatible native libraries");
+-                }
+-            }
+-            return;
+-        }
+-
+-        StringBuilder sb = new StringBuilder();
+-        sb.append(driverInfo.nativeLibraryDir)
+-          .append(File.pathSeparator);
+-        sb.append(driverInfo.sourceDir)
+-          .append("!/lib/")
+-          .append(abi);
+-        String paths = sb.toString();
+-
+-        if (DEBUG) Log.v(TAG, "gfx driver package libs: " + paths);
+-        setDriverPath(paths);
+-    }
+-
+-    private static String chooseAbi(ApplicationInfo ai) {
+-        String isa = VMRuntime.getCurrentInstructionSet();
+-        if (ai.primaryCpuAbi != null &&
+-                isa.equals(VMRuntime.getInstructionSet(ai.primaryCpuAbi))) {
+-            return ai.primaryCpuAbi;
+-        }
+-        if (ai.secondaryCpuAbi != null &&
+-                isa.equals(VMRuntime.getInstructionSet(ai.secondaryCpuAbi))) {
+-            return ai.secondaryCpuAbi;
+-        }
+-        return null;
+-    }
+-
+-    private static native void setDriverPath(String path);
+-
+-}
+diff --git a/core/jni/Android.mk b/core/jni/Android.mk
+index 206f44e72f23..e665ef38c9a4 100644
+--- a/core/jni/Android.mk
++++ b/core/jni/Android.mk
+@@ -81,7 +81,6 @@ LOCAL_SRC_FILES:= \
+     android_text_AndroidBidi.cpp \
+     android_text_StaticLayout.cpp \
+     android_os_Debug.cpp \
+-    android_os_GraphicsEnvironment.cpp \
+     android_os_MemoryFile.cpp \
+     android_os_MessageQueue.cpp \
+     android_os_Parcel.cpp \
+diff --git a/core/jni/AndroidRuntime.cpp b/core/jni/AndroidRuntime.cpp
+index 32c90c0329c1..1fda0b7a09a7 100644
+--- a/core/jni/AndroidRuntime.cpp
++++ b/core/jni/AndroidRuntime.cpp
+@@ -157,7 +157,6 @@ extern int register_android_database_SQLiteGlobal(JNIEnv* env);
+ extern int register_android_database_SQLiteDebug(JNIEnv* env);
+ extern int register_android_nio_utils(JNIEnv* env);
+ extern int register_android_os_Debug(JNIEnv* env);
+-extern int register_android_os_GraphicsEnvironment(JNIEnv* env);
+ extern int register_android_os_MessageQueue(JNIEnv* env);
+ extern int register_android_os_Parcel(JNIEnv* env);
+ extern int register_android_os_SELinux(JNIEnv* env);
+@@ -1351,7 +1350,6 @@ static const RegJNIRec gRegJNI[] = {
+     REG_JNI(register_android_database_SQLiteDebug),
+     REG_JNI(register_android_os_Debug),
+     REG_JNI(register_android_os_FileObserver),
+-    REG_JNI(register_android_os_GraphicsEnvironment),
+     REG_JNI(register_android_os_MessageQueue),
+     REG_JNI(register_android_os_SELinux),
+     REG_JNI(register_android_os_Trace),
+diff --git a/core/jni/android_os_GraphicsEnvironment.cpp b/core/jni/android_os_GraphicsEnvironment.cpp
+deleted file mode 100644
+index 905a85adc551..000000000000
+--- a/core/jni/android_os_GraphicsEnvironment.cpp
++++ /dev/null
+@@ -1,44 +0,0 @@
+-/*
+- * Copyright 2016 The Android Open Source Project
+- *
+- * Licensed under the Apache License, Version 2.0 (the "License");
+- * you may not use this file except in compliance with the License.
+- * You may obtain a copy of the License at
+- *
+- *      http://www.apache.org/licenses/LICENSE-2.0
+- *
+- * Unless required by applicable law or agreed to in writing, software
+- * distributed under the License is distributed on an "AS IS" BASIS,
+- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+- * See the License for the specific language governing permissions and
+- * limitations under the License.
+- */
+-
+-#define LOG_TAG "GraphicsEnvironment"
+-
+-#include <gui/GraphicsEnv.h>
+-#include <nativehelper/ScopedUtfChars.h>
+-#include "core_jni_helpers.h"
+-
+-namespace {
+-
+-void setDriverPath(JNIEnv* env, jobject clazz, jstring path) {
+-    ScopedUtfChars pathChars(env, path);
+-    android::GraphicsEnv::getInstance().setDriverPath(pathChars.c_str());
+-}
+-
+-const JNINativeMethod g_methods[] = {
+-    { "setDriverPath", "(Ljava/lang/String;)V", reinterpret_cast<void*>(setDriverPath) },
+-};
+-
+-const char* const kGraphicsEnvironmentName = "android/os/GraphicsEnvironment";
+-
+-} // anonymous namespace
+-
+-namespace android {
+-
+-int register_android_os_GraphicsEnvironment(JNIEnv* env) {
+-    return RegisterMethodsOrDie(env, kGraphicsEnvironmentName, g_methods, NELEM(g_methods));
+-}
+-
+-} // namespace android
+
+From c8b7c0146cd50f62c437c25cdb6b591a99e09e74 Mon Sep 17 00:00:00 2001
+From: adi766 <adityakumarteli7846@gmail.com>
+Date: Sat, 23 Sep 2017 16:48:05 +0000
+Subject: [PATCH 02/14] Fix hwui
+
+---
+ libs/hwui/Caches.cpp                  | 13 +++----------
+ libs/hwui/renderthread/EglManager.cpp |  5 +----
+ 2 files changed, 4 insertions(+), 14 deletions(-)
+
+diff --git a/libs/hwui/Caches.cpp b/libs/hwui/Caches.cpp
+index a8ced9b2597b..f263bdacd415 100644
+--- a/libs/hwui/Caches.cpp
++++ b/libs/hwui/Caches.cpp
+@@ -83,16 +83,9 @@ bool Caches::init() {
+ }
+ 
+ void Caches::initExtensions() {
+-    if (mExtensions.hasDebugMarker()) {
+-        eventMark = glInsertEventMarkerEXT;
+-
+-        startMark = glPushGroupMarkerEXT;
+-        endMark = glPopGroupMarkerEXT;
+-    } else {
+-        eventMark = eventMarkNull;
+-        startMark = startMarkNull;
+-        endMark = endMarkNull;
+-    }
++    eventMark = eventMarkNull;
++    startMark = startMarkNull;
++    endMark = endMarkNull;
+ }
+ 
+ void Caches::initConstraints() {
+diff --git a/libs/hwui/renderthread/EglManager.cpp b/libs/hwui/renderthread/EglManager.cpp
+index ac6a28fe6289..b476ce5bc8c5 100644
+--- a/libs/hwui/renderthread/EglManager.cpp
++++ b/libs/hwui/renderthread/EglManager.cpp
+@@ -335,10 +335,7 @@ bool EglManager::swapBuffers(const Frame& frame, const SkRect& screenDirty) {
+         fence();
+     }
+ 
+-    EGLint rects[4];
+-    frame.map(screenDirty, rects);
+-    eglSwapBuffersWithDamageKHR(mEglDisplay, frame.mSurface, rects,
+-            screenDirty.isEmpty() ? 0 : 1);
++    eglSwapBuffers(mEglDisplay, frame.mSurface);
+ 
+     EGLint err = eglGetError();
+     if (CC_LIKELY(err == EGL_SUCCESS)) {
+
+From cac1ebd177d8c86b05e7802d29c21ede56800fc1 Mon Sep 17 00:00:00 2001
+From: adi766 <adityakumarteli7846@gmail.com>
+Date: Sat, 23 Sep 2017 16:49:48 +0000
+Subject: [PATCH 03/14] Fix MTP
+
+---
+ core/java/android/os/storage/IMountService.java                | 1 +
+ core/java/android/os/storage/StorageManager.java               | 3 +++
+ packages/MtpDocumentsProvider/src/com/android/mtp/AppFuse.java | 3 +--
+ 3 files changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/core/java/android/os/storage/IMountService.java b/core/java/android/os/storage/IMountService.java
+index 9f4b05cb4d42..1073126326f0 100644
+--- a/core/java/android/os/storage/IMountService.java
++++ b/core/java/android/os/storage/IMountService.java
+@@ -2179,6 +2179,7 @@ public boolean onTransact(int code, Parcel data, Parcel reply,
+                     data.enforceInterface(DESCRIPTOR);
+                     String name = data.readString();
+                     ParcelFileDescriptor fd = mountAppFuse(name);
++		    if(fd == null) return true;
+                     reply.writeNoException();
+                     reply.writeParcelable(fd, Parcelable.PARCELABLE_WRITE_RETURN_VALUE);
+                     return true;
+diff --git a/core/java/android/os/storage/StorageManager.java b/core/java/android/os/storage/StorageManager.java
+index 12f703d75745..885eb04aae25 100644
+--- a/core/java/android/os/storage/StorageManager.java
++++ b/core/java/android/os/storage/StorageManager.java
+@@ -1294,7 +1294,10 @@ public ParcelFileDescriptor mountAppFuse(String name) {
+             return mMountService.mountAppFuse(name);
+         } catch (RemoteException e) {
+             throw e.rethrowFromSystemServer();
++	} catch (Exception e) {
++            Log.e(TAG, "TTT mountAppFuse error: "+e.getMessage());
+         }
++	return null;
+     }
+ 
+     /// Consts to match the password types in cryptfs.h
+diff --git a/packages/MtpDocumentsProvider/src/com/android/mtp/AppFuse.java b/packages/MtpDocumentsProvider/src/com/android/mtp/AppFuse.java
+index cd78e6106540..b03acbbd50e4 100644
+--- a/packages/MtpDocumentsProvider/src/com/android/mtp/AppFuse.java
++++ b/packages/MtpDocumentsProvider/src/com/android/mtp/AppFuse.java
+@@ -67,8 +67,7 @@
+     void mount(StorageManager storageManager) throws IOException {
+         Preconditions.checkState(mDeviceFd == null);
+         mDeviceFd = storageManager.mountAppFuse(mName);
+-        mMessageThread = new AppFuseMessageThread(mDeviceFd.dup().detachFd());
+-        mMessageThread.start();
++        if(mDeviceFd != null) { mMessageThread = new AppFuseMessageThread(mDeviceFd.dup().detachFd()); mMessageThread.start();}
+     }
+ 
+     @VisibleForTesting
+
+From 527f03aebaac8fe3c8ebff08c5104afb2a5dc709 Mon Sep 17 00:00:00 2001
+From: adi766 <adityakumarteli7846@gmail.com>
+Date: Sat, 23 Sep 2017 16:53:20 +0000
+Subject: [PATCH 04/14] Fix Camera & Remove BatteryStatsService error in log
+
+---
+ .../android/hardware/camera2/legacy/RequestThreadManager.java   | 2 ++
+ .../core/java/com/android/server/am/BatteryStatsService.java    | 1 -
+ 2 files changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/core/java/android/hardware/camera2/legacy/RequestThreadManager.java b/core/java/android/hardware/camera2/legacy/RequestThreadManager.java
+index da62f5445daa..ccd7657170ca 100644
+--- a/core/java/android/hardware/camera2/legacy/RequestThreadManager.java
++++ b/core/java/android/hardware/camera2/legacy/RequestThreadManager.java
+@@ -242,6 +242,8 @@ public void onPictureTaken(byte[] data, Camera camera) {
+                     }
+                 } catch (LegacyExceptionUtils.BufferQueueAbandonedException e) {
+                     Log.w(TAG, "Surface abandoned, dropping frame. ", e);
++		} catch (IllegalArgumentException e) {
++                    Log.w(TAG, "no valid native surface, dropping frame. ", e);
+                 }
+             }
+ 
+diff --git a/services/core/java/com/android/server/am/BatteryStatsService.java b/services/core/java/com/android/server/am/BatteryStatsService.java
+index ff13125a8417..e6241c50375f 100644
+--- a/services/core/java/com/android/server/am/BatteryStatsService.java
++++ b/services/core/java/com/android/server/am/BatteryStatsService.java
+@@ -1422,7 +1422,6 @@ private WifiActivityEnergyInfo extractDelta(WifiActivityEnergyInfo latest) {
+                 return data;
+             }
+         }
+-        Slog.e(TAG, "no controller energy info supplied");
+         return null;
+     }
+ 
+
+From c9c255c6e60ed86e1a631ae9013f1644f5dbfa18 Mon Sep 17 00:00:00 2001
+From: adi766 <adityakumarteli7846@gmail.com>
+Date: Sat, 23 Sep 2017 16:55:59 +0000
+Subject: [PATCH 05/14] Show carrier name instead of numeric operator
+
+---
+ .../statusbar/policy/MobileSignalController.java | 16 ++++++++++++++--
+ 1 file changed, 14 insertions(+), 2 deletions(-)
+
+diff --git a/packages/SystemUI/src/com/android/systemui/statusbar/policy/MobileSignalController.java b/packages/SystemUI/src/com/android/systemui/statusbar/policy/MobileSignalController.java
+index 866c5aef931e..e2690e8999df 100644
+--- a/packages/SystemUI/src/com/android/systemui/statusbar/policy/MobileSignalController.java
++++ b/packages/SystemUI/src/com/android/systemui/statusbar/policy/MobileSignalController.java
+@@ -92,6 +92,11 @@ public MobileSignalController(Context context, Config config, boolean hasMobileD
+ 
+         String networkName = info.getCarrierName() != null ? info.getCarrierName().toString()
+                 : mNetworkNameDefault;
++	if (isNumeric(networkName)) {
++            String displayName = info.getDisplayName() != null? info.getDisplayName().toString()
++                : mNetworkNameDefault;
++            networkName = displayName;
++        }
+         mLastState.networkName = mCurrentState.networkName = networkName;
+         mLastState.networkNameData = mCurrentState.networkNameData = networkName;
+         mLastState.enabled = mCurrentState.enabled = hasMobileData;
+@@ -100,6 +105,13 @@ public MobileSignalController(Context context, Config config, boolean hasMobileD
+         updateDataSim();
+     }
+ 
++    private boolean isNumeric(String str) {
++        for (char c : str.toCharArray()) {
++            if (!Character.isDigit(c)) return false;
++        }
++        return true;
++    }
++
+     public void setConfiguration(Config config) {
+         mConfig = config;
+         mapIconSets();
+@@ -360,10 +372,10 @@ void updateNetworkName(boolean showSpn, String spn, String dataSpn,
+         StringBuilder str = new StringBuilder();
+         StringBuilder strData = new StringBuilder();
+         if (showPlmn && plmn != null) {
+-            str.append(plmn);
++            if (!isNumeric(plmn)) str.append(plmn);
+             strData.append(plmn);
+         }
+-        if (showSpn && spn != null) {
++        if (spn != null) {
+             if (str.length() != 0) {
+                 str.append(mNetworkNameSeparator);
+             }
+
+From 846427ff50c980e3a1fb51100e26781ede0eb22f Mon Sep 17 00:00:00 2001
+From: tribetmen <dima.koloskov.1997@yandex.ru>
+Date: Sun, 1 Oct 2017 21:06:45 +0300
+Subject: [PATCH 06/14] Fix KernelUidCpuTimeReader
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Исправление ошибки: "KernelUidCpuTimeReader: Failed to read uid_cputime: /proc/uid_cputime/show_uid_stat (No such file or directory)"
+---
+ .../com/android/internal/os/KernelUidCpuTimeReader.java    | 7 -------
+ 1 file changed, 7 deletions(-)
+
+diff --git a/core/java/com/android/internal/os/KernelUidCpuTimeReader.java b/core/java/com/android/internal/os/KernelUidCpuTimeReader.java
+index e8919ede82b5..32bf2bf7e055 100644
+--- a/core/java/com/android/internal/os/KernelUidCpuTimeReader.java
++++ b/core/java/com/android/internal/os/KernelUidCpuTimeReader.java
+@@ -28,8 +28,6 @@
+ import java.io.IOException;
+ 
+ /**
+- * Reads /proc/uid_cputime/show_uid_stat which has the line format:
+- *
+  * uid: user_time_micro_seconds system_time_micro_seconds power_in_milli-amp-micro_seconds
+  *
+  * This provides the time a UID's processes spent executing in user-space and kernel-space.
+@@ -39,7 +37,6 @@
+  */
+ public class KernelUidCpuTimeReader {
+     private static final String TAG = "KernelUidCpuTimeReader";
+-    private static final String sProcFile = "/proc/uid_cputime/show_uid_stat";
+     private static final String sRemoveUidProcFile = "/proc/uid_cputime/remove_uid_range";
+ 
+     /**
+@@ -68,7 +65,6 @@
+      */
+     public void readDelta(@Nullable Callback callback) {
+         long nowUs = SystemClock.elapsedRealtime() * 1000;
+-        try (BufferedReader reader = new BufferedReader(new FileReader(sProcFile))) {
+             TextUtils.SimpleStringSplitter splitter = new TextUtils.SimpleStringSplitter(' ');
+             String line;
+             while ((line = reader.readLine()) != null) {
+@@ -137,9 +133,6 @@ public void readDelta(@Nullable Callback callback) {
+                 mLastSystemTimeUs.put(uid, systemTimeUs);
+                 mLastPowerMaUs.put(uid, powerMaUs);
+             }
+-        } catch (IOException e) {
+-            Slog.e(TAG, "Failed to read uid_cputime: " + e.getMessage());
+-        }
+         mLastTimeReadUs = nowUs;
+     }
+ 
+
+From 3d20e8eee0bf69670feee2cf86e02875900f257c Mon Sep 17 00:00:00 2001
+From: tribetmen <dima.koloskov.1997@yandex.ru>
+Date: Mon, 2 Oct 2017 13:25:51 +0300
+Subject: [PATCH 07/14] Fix KernelUidCpuTimeReader 2
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Исправление ошибки: "KernelUidCpuTimeReader: Failed to read uid_cputime: /proc/uid_cputime/show_uid_stat (No such file or directory)"
+---
+ .../internal/os/KernelUidCpuTimeReader.java   | 85 -------------------
+ 1 file changed, 85 deletions(-)
+
+diff --git a/core/java/com/android/internal/os/KernelUidCpuTimeReader.java b/core/java/com/android/internal/os/KernelUidCpuTimeReader.java
+index 32bf2bf7e055..fa39a7b20e85 100644
+--- a/core/java/com/android/internal/os/KernelUidCpuTimeReader.java
++++ b/core/java/com/android/internal/os/KernelUidCpuTimeReader.java
+@@ -17,15 +17,7 @@
+ 
+ import android.annotation.Nullable;
+ import android.os.SystemClock;
+-import android.text.TextUtils;
+-import android.util.Slog;
+ import android.util.SparseLongArray;
+-import android.util.TimeUtils;
+-
+-import java.io.BufferedReader;
+-import java.io.FileReader;
+-import java.io.FileWriter;
+-import java.io.IOException;
+ 
+ /**
+  * uid: user_time_micro_seconds system_time_micro_seconds power_in_milli-amp-micro_seconds
+@@ -36,8 +28,6 @@
+  * delta.
+  */
+ public class KernelUidCpuTimeReader {
+-    private static final String TAG = "KernelUidCpuTimeReader";
+-    private static final String sRemoveUidProcFile = "/proc/uid_cputime/remove_uid_range";
+ 
+     /**
+      * Callback interface for processing each line of the proc file.
+@@ -65,74 +55,6 @@
+      */
+     public void readDelta(@Nullable Callback callback) {
+         long nowUs = SystemClock.elapsedRealtime() * 1000;
+-            TextUtils.SimpleStringSplitter splitter = new TextUtils.SimpleStringSplitter(' ');
+-            String line;
+-            while ((line = reader.readLine()) != null) {
+-                splitter.setString(line);
+-                final String uidStr = splitter.next();
+-                final int uid = Integer.parseInt(uidStr.substring(0, uidStr.length() - 1), 10);
+-                final long userTimeUs = Long.parseLong(splitter.next(), 10);
+-                final long systemTimeUs = Long.parseLong(splitter.next(), 10);
+-                final long powerMaUs;
+-                if (splitter.hasNext()) {
+-                    powerMaUs = Long.parseLong(splitter.next(), 10) / 1000;
+-                } else {
+-                    powerMaUs = 0;
+-                }
+-
+-                // Only report if there is a callback and if this is not the first read.
+-                if (callback != null && mLastTimeReadUs != 0) {
+-                    long userTimeDeltaUs = userTimeUs;
+-                    long systemTimeDeltaUs = systemTimeUs;
+-                    long powerDeltaMaUs = powerMaUs;
+-                    int index = mLastUserTimeUs.indexOfKey(uid);
+-                    if (index >= 0) {
+-                        userTimeDeltaUs -= mLastUserTimeUs.valueAt(index);
+-                        systemTimeDeltaUs -= mLastSystemTimeUs.valueAt(index);
+-                        powerDeltaMaUs -= mLastPowerMaUs.valueAt(index);
+-
+-                        final long timeDiffUs = nowUs - mLastTimeReadUs;
+-                        if (userTimeDeltaUs < 0 || systemTimeDeltaUs < 0 || powerDeltaMaUs < 0) {
+-                            StringBuilder sb = new StringBuilder("Malformed cpu data for UID=");
+-                            sb.append(uid).append("!\n");
+-                            sb.append("Time between reads: ");
+-                            TimeUtils.formatDuration(timeDiffUs / 1000, sb);
+-                            sb.append("\n");
+-                            sb.append("Previous times: u=");
+-                            TimeUtils.formatDuration(mLastUserTimeUs.valueAt(index) / 1000, sb);
+-                            sb.append(" s=");
+-                            TimeUtils.formatDuration(mLastSystemTimeUs.valueAt(index) / 1000, sb);
+-                            sb.append(" p=").append(mLastPowerMaUs.valueAt(index) / 1000);
+-                            sb.append("mAms\n");
+-
+-                            sb.append("Current times: u=");
+-                            TimeUtils.formatDuration(userTimeUs / 1000, sb);
+-                            sb.append(" s=");
+-                            TimeUtils.formatDuration(systemTimeUs / 1000, sb);
+-                            sb.append(" p=").append(powerMaUs / 1000);
+-                            sb.append("mAms\n");
+-                            sb.append("Delta: u=");
+-                            TimeUtils.formatDuration(userTimeDeltaUs / 1000, sb);
+-                            sb.append(" s=");
+-                            TimeUtils.formatDuration(systemTimeDeltaUs / 1000, sb);
+-                            sb.append(" p=").append(powerDeltaMaUs / 1000).append("mAms");
+-                            Slog.e(TAG, sb.toString());
+-
+-                            userTimeDeltaUs = 0;
+-                            systemTimeDeltaUs = 0;
+-                            powerDeltaMaUs = 0;
+-                        }
+-                    }
+-
+-                    if (userTimeDeltaUs != 0 || systemTimeDeltaUs != 0 || powerDeltaMaUs != 0) {
+-                        callback.onUidCpuTime(uid, userTimeDeltaUs, systemTimeDeltaUs,
+-                                powerDeltaMaUs);
+-                    }
+-                }
+-                mLastUserTimeUs.put(uid, userTimeUs);
+-                mLastSystemTimeUs.put(uid, systemTimeUs);
+-                mLastPowerMaUs.put(uid, powerMaUs);
+-            }
+         mLastTimeReadUs = nowUs;
+     }
+ 
+@@ -147,12 +69,5 @@ public void removeUid(int uid) {
+             mLastSystemTimeUs.removeAt(index);
+             mLastPowerMaUs.removeAt(index);
+         }
+-
+-        try (FileWriter writer = new FileWriter(sRemoveUidProcFile)) {
+-            writer.write(Integer.toString(uid) + "-" + Integer.toString(uid));
+-            writer.flush();
+-        } catch (IOException e) {
+-            Slog.e(TAG, "failed to remove uid from uid_cputime module", e);
+-        }
+     }
+ }
+
+From a3efa85c1b8278c60cb1412b58a36b5be85b6e0b Mon Sep 17 00:00:00 2001
+From: tribetmen <dima.koloskov.1997@yandex.ru>
+Date: Mon, 2 Oct 2017 13:50:15 +0300
+Subject: [PATCH 08/14] Fix NetdConnector
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Исправление ошибok:
+NetdConnector: Communications error: java.io.IOException: Connection refused
+NetdConnector: Error in NativeDaemonConnector: java.io.IOException: Connection refused
+NetdConnector: NDC Command {3 bandwidth enable} took too long (2336ms)
+NetdConnector: Error handling '613 IfaceClass idle (null)': java.lang.NumberFormatException: For input string: "(null)"
+---
+ .../android/server/NativeDaemonConnector.java | 145 ------------------
+ 1 file changed, 145 deletions(-)
+
+diff --git a/services/core/java/com/android/server/NativeDaemonConnector.java b/services/core/java/com/android/server/NativeDaemonConnector.java
+index f5f773214124..59b6fa509431 100644
+--- a/services/core/java/com/android/server/NativeDaemonConnector.java
++++ b/services/core/java/com/android/server/NativeDaemonConnector.java
+@@ -33,7 +33,6 @@
+ 
+ import java.io.FileDescriptor;
+ import java.io.IOException;
+-import java.io.InputStream;
+ import java.io.OutputStream;
+ import java.io.PrintWriter;
+ import java.nio.charset.StandardCharsets;
+@@ -73,13 +72,10 @@
+     private AtomicInteger mSequenceNumber;
+ 
+     private static final long DEFAULT_TIMEOUT = 1 * 60 * 1000; /* 1 minute */
+-    private static final long WARN_EXECUTE_DELAY_MS = 500; /* .5 sec */
+ 
+     /** Lock held whenever communicating with native daemon. */
+     private final Object mDaemonLock = new Object();
+ 
+-    private final int BUFFER_SIZE = 4096;
+-
+     NativeDaemonConnector(INativeDaemonConnectorCallbacks callbacks, String socket,
+             int responseQueueSize, String logTag, int maxLogSize, PowerManager.WakeLock wl) {
+         this(callbacks, socket, responseQueueSize, logTag, maxLogSize, wl,
+@@ -130,15 +126,6 @@ public void setWarnIfHeld(Object warnIfHeld) {
+     @Override
+     public void run() {
+         mCallbackHandler = new Handler(mLooper, this);
+-
+-        while (true) {
+-            try {
+-                listenToSocket();
+-            } catch (Exception e) {
+-                loge("Error in NativeDaemonConnector: " + e);
+-                SystemClock.sleep(5000);
+-            }
+-        }
+     }
+ 
+     @Override
+@@ -146,24 +133,6 @@ public boolean handleMessage(Message msg) {
+         final String event = (String) msg.obj;
+         final int start = uptimeMillisInt();
+         final int sent = msg.arg1;
+-        try {
+-            if (!mCallbacks.onEvent(msg.what, event, NativeDaemonEvent.unescapeArgs(event))) {
+-                log(String.format("Unhandled event '%s'", event));
+-            }
+-        } catch (Exception e) {
+-            loge("Error handling '" + event + "': " + e);
+-        } finally {
+-            if (mCallbacks.onCheckHoldWakeLock(msg.what) && mWakeLock != null) {
+-                mWakeLock.release();
+-            }
+-            final int end = uptimeMillisInt();
+-            if (start > sent && start - sent > WARN_EXECUTE_DELAY_MS) {
+-                loge(String.format("NDC event {%s} processed too late: %dms", event, start - sent));
+-            }
+-            if (end > start && end - start > WARN_EXECUTE_DELAY_MS) {
+-                loge(String.format("NDC event {%s} took too long: %dms", event, end - start));
+-            }
+-        }
+         return true;
+     }
+ 
+@@ -181,115 +150,6 @@ private LocalSocketAddress determineSocketAddress() {
+ 
+     private void listenToSocket() throws IOException {
+         LocalSocket socket = null;
+-
+-        try {
+-            socket = new LocalSocket();
+-            LocalSocketAddress address = determineSocketAddress();
+-
+-            socket.connect(address);
+-
+-            InputStream inputStream = socket.getInputStream();
+-            synchronized (mDaemonLock) {
+-                mOutputStream = socket.getOutputStream();
+-            }
+-
+-            mCallbacks.onDaemonConnected();
+-
+-            FileDescriptor[] fdList = null;
+-            byte[] buffer = new byte[BUFFER_SIZE];
+-            int start = 0;
+-
+-            while (true) {
+-                int count = inputStream.read(buffer, start, BUFFER_SIZE - start);
+-                if (count < 0) {
+-                    loge("got " + count + " reading with start = " + start);
+-                    break;
+-                }
+-                fdList = socket.getAncillaryFileDescriptors();
+-
+-                // Add our starting point to the count and reset the start.
+-                count += start;
+-                start = 0;
+-
+-                for (int i = 0; i < count; i++) {
+-                    if (buffer[i] == 0) {
+-                        // Note - do not log this raw message since it may contain
+-                        // sensitive data
+-                        final String rawEvent = new String(
+-                                buffer, start, i - start, StandardCharsets.UTF_8);
+-
+-                        boolean releaseWl = false;
+-                        try {
+-                            final NativeDaemonEvent event =
+-                                    NativeDaemonEvent.parseRawEvent(rawEvent, fdList);
+-
+-                            log("RCV <- {" + event + "}");
+-
+-                            if (event.isClassUnsolicited()) {
+-                                // TODO: migrate to sending NativeDaemonEvent instances
+-                                if (mCallbacks.onCheckHoldWakeLock(event.getCode())
+-                                        && mWakeLock != null) {
+-                                    mWakeLock.acquire();
+-                                    releaseWl = true;
+-                                }
+-                                Message msg = mCallbackHandler.obtainMessage(
+-                                        event.getCode(), uptimeMillisInt(), 0, event.getRawEvent());
+-                                if (mCallbackHandler.sendMessage(msg)) {
+-                                    releaseWl = false;
+-                                }
+-                            } else {
+-                                mResponseQueue.add(event.getCmdNumber(), event);
+-                            }
+-                        } catch (IllegalArgumentException e) {
+-                            log("Problem parsing message " + e);
+-                        } finally {
+-                            if (releaseWl) {
+-                                mWakeLock.release();
+-                            }
+-                        }
+-
+-                        start = i + 1;
+-                    }
+-                }
+-
+-                if (start == 0) {
+-                    log("RCV incomplete");
+-                }
+-
+-                // We should end at the amount we read. If not, compact then
+-                // buffer and read again.
+-                if (start != count) {
+-                    final int remaining = BUFFER_SIZE - start;
+-                    System.arraycopy(buffer, start, buffer, 0, remaining);
+-                    start = remaining;
+-                } else {
+-                    start = 0;
+-                }
+-            }
+-        } catch (IOException ex) {
+-            loge("Communications error: " + ex);
+-            throw ex;
+-        } finally {
+-            synchronized (mDaemonLock) {
+-                if (mOutputStream != null) {
+-                    try {
+-                        loge("closing stream for " + mSocket);
+-                        mOutputStream.close();
+-                    } catch (IOException e) {
+-                        loge("Failed closing output stream: " + e);
+-                    }
+-                    mOutputStream = null;
+-                }
+-            }
+-
+-            try {
+-                if (socket != null) {
+-                    socket.close();
+-                }
+-            } catch (IOException ex) {
+-                loge("Failed closing socket: " + ex);
+-            }
+-        }
+     }
+ 
+     /**
+@@ -493,11 +353,6 @@ public NativeDaemonEvent execute(long timeoutMs, String cmd, Object... args)
+             events.add(event);
+         } while (event.isClassContinue());
+ 
+-        final long endTime = SystemClock.elapsedRealtime();
+-        if (endTime - startTime > WARN_EXECUTE_DELAY_MS) {
+-            loge("NDC Command {" + logCmd + "} took too long (" + (endTime - startTime) + "ms)");
+-        }
+-
+         if (event.isClassClientError()) {
+             throw new NativeDaemonArgumentException(logCmd, event);
+         }
+
+From 47c66311d4a241ee70cdae8b046c9100eaf7aa83 Mon Sep 17 00:00:00 2001
+From: tribetmen <dima.koloskov.1997@yandex.ru>
+Date: Mon, 2 Oct 2017 13:54:13 +0300
+Subject: [PATCH 09/14] Fix LockSettingsStorage
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Исправление ошибки:
+LockSettingsStorage: Cannot read file java.io.FileNotFoundException: /data/system/gatekeeper.password.key: open failed: ENOENT (No such file or directory)
+---
+ .../com/android/server/LockSettingsStorage.java  | 16 ----------------
+ 1 file changed, 16 deletions(-)
+
+diff --git a/services/core/java/com/android/server/LockSettingsStorage.java b/services/core/java/com/android/server/LockSettingsStorage.java
+index 17f18f0c5712..217fb5bca928 100644
+--- a/services/core/java/com/android/server/LockSettingsStorage.java
++++ b/services/core/java/com/android/server/LockSettingsStorage.java
+@@ -299,22 +299,6 @@ private boolean hasFile(String name) {
+ 
+         RandomAccessFile raf = null;
+         byte[] stored = null;
+-        try {
+-            raf = new RandomAccessFile(name, "r");
+-            stored = new byte[(int) raf.length()];
+-            raf.readFully(stored, 0, stored.length);
+-            raf.close();
+-        } catch (IOException e) {
+-            Slog.e(TAG, "Cannot read file " + e);
+-        } finally {
+-            if (raf != null) {
+-                try {
+-                    raf.close();
+-                } catch (IOException e) {
+-                    Slog.e(TAG, "Error closing file " + e);
+-                }
+-            }
+-        }
+         mCache.putFileIfUnchanged(name, stored, version);
+         return stored;
+     }
+
+From c5de1ff13ea88a0c265626e43a6068a7f97298b3 Mon Sep 17 00:00:00 2001
+From: LineageOS-MTK <luzejij@binka.me>
+Date: Mon, 2 Oct 2017 13:58:21 +0300
+Subject: [PATCH 10/14] Revert "Fix NetdConnector"
+
+This reverts commit 86dd48efbcc7a0b2eac064e95c03e7c1f29bc606.
+---
+ .../android/server/NativeDaemonConnector.java | 145 ++++++++++++++++++
+ 1 file changed, 145 insertions(+)
+
+diff --git a/services/core/java/com/android/server/NativeDaemonConnector.java b/services/core/java/com/android/server/NativeDaemonConnector.java
+index 59b6fa509431..f5f773214124 100644
+--- a/services/core/java/com/android/server/NativeDaemonConnector.java
++++ b/services/core/java/com/android/server/NativeDaemonConnector.java
+@@ -33,6 +33,7 @@
+ 
+ import java.io.FileDescriptor;
+ import java.io.IOException;
++import java.io.InputStream;
+ import java.io.OutputStream;
+ import java.io.PrintWriter;
+ import java.nio.charset.StandardCharsets;
+@@ -72,10 +73,13 @@
+     private AtomicInteger mSequenceNumber;
+ 
+     private static final long DEFAULT_TIMEOUT = 1 * 60 * 1000; /* 1 minute */
++    private static final long WARN_EXECUTE_DELAY_MS = 500; /* .5 sec */
+ 
+     /** Lock held whenever communicating with native daemon. */
+     private final Object mDaemonLock = new Object();
+ 
++    private final int BUFFER_SIZE = 4096;
++
+     NativeDaemonConnector(INativeDaemonConnectorCallbacks callbacks, String socket,
+             int responseQueueSize, String logTag, int maxLogSize, PowerManager.WakeLock wl) {
+         this(callbacks, socket, responseQueueSize, logTag, maxLogSize, wl,
+@@ -126,6 +130,15 @@ public void setWarnIfHeld(Object warnIfHeld) {
+     @Override
+     public void run() {
+         mCallbackHandler = new Handler(mLooper, this);
++
++        while (true) {
++            try {
++                listenToSocket();
++            } catch (Exception e) {
++                loge("Error in NativeDaemonConnector: " + e);
++                SystemClock.sleep(5000);
++            }
++        }
+     }
+ 
+     @Override
+@@ -133,6 +146,24 @@ public boolean handleMessage(Message msg) {
+         final String event = (String) msg.obj;
+         final int start = uptimeMillisInt();
+         final int sent = msg.arg1;
++        try {
++            if (!mCallbacks.onEvent(msg.what, event, NativeDaemonEvent.unescapeArgs(event))) {
++                log(String.format("Unhandled event '%s'", event));
++            }
++        } catch (Exception e) {
++            loge("Error handling '" + event + "': " + e);
++        } finally {
++            if (mCallbacks.onCheckHoldWakeLock(msg.what) && mWakeLock != null) {
++                mWakeLock.release();
++            }
++            final int end = uptimeMillisInt();
++            if (start > sent && start - sent > WARN_EXECUTE_DELAY_MS) {
++                loge(String.format("NDC event {%s} processed too late: %dms", event, start - sent));
++            }
++            if (end > start && end - start > WARN_EXECUTE_DELAY_MS) {
++                loge(String.format("NDC event {%s} took too long: %dms", event, end - start));
++            }
++        }
+         return true;
+     }
+ 
+@@ -150,6 +181,115 @@ private LocalSocketAddress determineSocketAddress() {
+ 
+     private void listenToSocket() throws IOException {
+         LocalSocket socket = null;
++
++        try {
++            socket = new LocalSocket();
++            LocalSocketAddress address = determineSocketAddress();
++
++            socket.connect(address);
++
++            InputStream inputStream = socket.getInputStream();
++            synchronized (mDaemonLock) {
++                mOutputStream = socket.getOutputStream();
++            }
++
++            mCallbacks.onDaemonConnected();
++
++            FileDescriptor[] fdList = null;
++            byte[] buffer = new byte[BUFFER_SIZE];
++            int start = 0;
++
++            while (true) {
++                int count = inputStream.read(buffer, start, BUFFER_SIZE - start);
++                if (count < 0) {
++                    loge("got " + count + " reading with start = " + start);
++                    break;
++                }
++                fdList = socket.getAncillaryFileDescriptors();
++
++                // Add our starting point to the count and reset the start.
++                count += start;
++                start = 0;
++
++                for (int i = 0; i < count; i++) {
++                    if (buffer[i] == 0) {
++                        // Note - do not log this raw message since it may contain
++                        // sensitive data
++                        final String rawEvent = new String(
++                                buffer, start, i - start, StandardCharsets.UTF_8);
++
++                        boolean releaseWl = false;
++                        try {
++                            final NativeDaemonEvent event =
++                                    NativeDaemonEvent.parseRawEvent(rawEvent, fdList);
++
++                            log("RCV <- {" + event + "}");
++
++                            if (event.isClassUnsolicited()) {
++                                // TODO: migrate to sending NativeDaemonEvent instances
++                                if (mCallbacks.onCheckHoldWakeLock(event.getCode())
++                                        && mWakeLock != null) {
++                                    mWakeLock.acquire();
++                                    releaseWl = true;
++                                }
++                                Message msg = mCallbackHandler.obtainMessage(
++                                        event.getCode(), uptimeMillisInt(), 0, event.getRawEvent());
++                                if (mCallbackHandler.sendMessage(msg)) {
++                                    releaseWl = false;
++                                }
++                            } else {
++                                mResponseQueue.add(event.getCmdNumber(), event);
++                            }
++                        } catch (IllegalArgumentException e) {
++                            log("Problem parsing message " + e);
++                        } finally {
++                            if (releaseWl) {
++                                mWakeLock.release();
++                            }
++                        }
++
++                        start = i + 1;
++                    }
++                }
++
++                if (start == 0) {
++                    log("RCV incomplete");
++                }
++
++                // We should end at the amount we read. If not, compact then
++                // buffer and read again.
++                if (start != count) {
++                    final int remaining = BUFFER_SIZE - start;
++                    System.arraycopy(buffer, start, buffer, 0, remaining);
++                    start = remaining;
++                } else {
++                    start = 0;
++                }
++            }
++        } catch (IOException ex) {
++            loge("Communications error: " + ex);
++            throw ex;
++        } finally {
++            synchronized (mDaemonLock) {
++                if (mOutputStream != null) {
++                    try {
++                        loge("closing stream for " + mSocket);
++                        mOutputStream.close();
++                    } catch (IOException e) {
++                        loge("Failed closing output stream: " + e);
++                    }
++                    mOutputStream = null;
++                }
++            }
++
++            try {
++                if (socket != null) {
++                    socket.close();
++                }
++            } catch (IOException ex) {
++                loge("Failed closing socket: " + ex);
++            }
++        }
+     }
+ 
+     /**
+@@ -353,6 +493,11 @@ public NativeDaemonEvent execute(long timeoutMs, String cmd, Object... args)
+             events.add(event);
+         } while (event.isClassContinue());
+ 
++        final long endTime = SystemClock.elapsedRealtime();
++        if (endTime - startTime > WARN_EXECUTE_DELAY_MS) {
++            loge("NDC Command {" + logCmd + "} took too long (" + (endTime - startTime) + "ms)");
++        }
++
+         if (event.isClassClientError()) {
+             throw new NativeDaemonArgumentException(logCmd, event);
+         }
+
+From 711f87b9819871aac02ca9e40bbf837439bb3eaa Mon Sep 17 00:00:00 2001
+From: LineageOS-MTK <luzejij@binka.me>
+Date: Mon, 2 Oct 2017 14:03:49 +0300
+Subject: [PATCH 11/14] Revert "Fix LockSettingsStorage"
+
+This reverts commit d765a132423f3655796eba561fafd1a16f35847f.
+---
+ .../com/android/server/LockSettingsStorage.java  | 16 ++++++++++++++++
+ 1 file changed, 16 insertions(+)
+
+diff --git a/services/core/java/com/android/server/LockSettingsStorage.java b/services/core/java/com/android/server/LockSettingsStorage.java
+index 217fb5bca928..17f18f0c5712 100644
+--- a/services/core/java/com/android/server/LockSettingsStorage.java
++++ b/services/core/java/com/android/server/LockSettingsStorage.java
+@@ -299,6 +299,22 @@ private boolean hasFile(String name) {
+ 
+         RandomAccessFile raf = null;
+         byte[] stored = null;
++        try {
++            raf = new RandomAccessFile(name, "r");
++            stored = new byte[(int) raf.length()];
++            raf.readFully(stored, 0, stored.length);
++            raf.close();
++        } catch (IOException e) {
++            Slog.e(TAG, "Cannot read file " + e);
++        } finally {
++            if (raf != null) {
++                try {
++                    raf.close();
++                } catch (IOException e) {
++                    Slog.e(TAG, "Error closing file " + e);
++                }
++            }
++        }
+         mCache.putFileIfUnchanged(name, stored, version);
+         return stored;
+     }
+
+From c3e6988189de31d09a692d2b812bef9ec1ae965e Mon Sep 17 00:00:00 2001
+From: LineageOS-MTK <luzejij@binka.me>
+Date: Wed, 4 Oct 2017 10:06:53 +0300
+Subject: [PATCH 12/14] =?UTF-8?q?=D0=98=D1=81=D0=BF=D1=80=D0=B0=D0=B2?=
+ =?UTF-8?q?=D0=BB=D0=B5=D0=BD=D0=B8=D1=8F=20=D0=B4=D0=BB=D1=8F=20NetdConne?=
+ =?UTF-8?q?ctor?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Исправление ошибok:
+NetdConnector: Communications error: java.io.IOException: Connection
+refused
+NetdConnector: Error in NativeDaemonConnector: java.io.IOException:
+Connection refused
+NetdConnector: NDC Command ...
+NetdConnector: Error handling '613 IfaceClass idle (null)':
+java.lang.NumberFormatException: For input string: "(null)"
+---
+ .../android/server/NativeDaemonConnector.java   | 17 +++++++++++++----
+ .../server/NetworkManagementService.java        |  2 +-
+ 2 files changed, 14 insertions(+), 5 deletions(-)
+
+diff --git a/services/core/java/com/android/server/NativeDaemonConnector.java b/services/core/java/com/android/server/NativeDaemonConnector.java
+index f5f773214124..cc1aedc4fa33 100644
+--- a/services/core/java/com/android/server/NativeDaemonConnector.java
++++ b/services/core/java/com/android/server/NativeDaemonConnector.java
+@@ -73,7 +73,7 @@
+     private AtomicInteger mSequenceNumber;
+ 
+     private static final long DEFAULT_TIMEOUT = 1 * 60 * 1000; /* 1 minute */
+-    private static final long WARN_EXECUTE_DELAY_MS = 500; /* .5 sec */
++    private static final long WARN_EXECUTE_DELAY_MS = 5500; /* 5.5 sec */
+ 
+     /** Lock held whenever communicating with native daemon. */
+     private final Object mDaemonLock = new Object();
+@@ -131,12 +131,22 @@ public void setWarnIfHeld(Object warnIfHeld) {
+     public void run() {
+         mCallbackHandler = new Handler(mLooper, this);
+ 
++        long startTime = 0;
+         while (true) {
+             try {
+                 listenToSocket();
+             } catch (Exception e) {
+-                loge("Error in NativeDaemonConnector: " + e);
+-                SystemClock.sleep(5000);
++                long currentTime = SystemClock.uptimeMillis();
++                long elapsedTime = currentTime - startTime;
++
++                if (elapsedTime >= 5000 && startTime > 0) {
++                    startTime = 0;
++                }
++
++                if (startTime == 0)
++                    startTime = currentTime;
++
++                SystemClock.sleep(100);
+             }
+         }
+     }
+@@ -267,7 +277,6 @@ private void listenToSocket() throws IOException {
+                 }
+             }
+         } catch (IOException ex) {
+-            loge("Communications error: " + ex);
+             throw ex;
+         } finally {
+             synchronized (mDaemonLock) {
+diff --git a/services/core/java/com/android/server/NetworkManagementService.java b/services/core/java/com/android/server/NetworkManagementService.java
+index 4099d93e2f13..13b0c7ccb727 100644
+--- a/services/core/java/com/android/server/NetworkManagementService.java
++++ b/services/core/java/com/android/server/NetworkManagementService.java
+@@ -925,7 +925,7 @@ public boolean onEvent(int code, String raw, String[] cooked) {
+                         timestampNanos = SystemClock.elapsedRealtimeNanos();
+                     }
+                     boolean isActive = cooked[2].equals("active");
+-                    notifyInterfaceClassActivity(Integer.parseInt(cooked[3]),
++                    notifyInterfaceClassActivity(cooked[3] == null ? 0 : Integer.parseInt(cooked[3]),
+                             isActive ? DataConnectionRealTimeInfo.DC_POWER_STATE_HIGH
+                             : DataConnectionRealTimeInfo.DC_POWER_STATE_LOW,
+                             timestampNanos, processUid, false);
+
+From e4babcb20fdb6e6b72f437490614ed7910da36f3 Mon Sep 17 00:00:00 2001
+From: LineageOS-MTK <luzejij@binka.me>
+Date: Mon, 9 Oct 2017 23:50:42 +0300
+Subject: [PATCH 13/14] Fix MediaPlayer-JNI
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Исправляет ошибку:
+E MediaPlayer-JNI: JNIMediaPlayerFactory: bIsQCMediaPlayerPresent 0
+---
+ media/java/android/media/MediaFile.java |   4 +-
+ media/jni/android_media_MediaPlayer.cpp | 168 +-----------------------
+ 2 files changed, 5 insertions(+), 167 deletions(-)
+
+diff --git a/media/java/android/media/MediaFile.java b/media/java/android/media/MediaFile.java
+index aa2bd57eb1f5..5cb45ca19757 100644
+--- a/media/java/android/media/MediaFile.java
++++ b/media/java/android/media/MediaFile.java
+@@ -117,10 +117,9 @@
+     public static final int FILE_TYPE_PLS      = 42;
+     public static final int FILE_TYPE_WPL      = 43;
+     public static final int FILE_TYPE_HTTPLIVE = 44;
+-    public static final int FILE_TYPE_DASH     = 45;
+ 
+     private static final int FIRST_PLAYLIST_FILE_TYPE = FILE_TYPE_M3U;
+-    private static final int LAST_PLAYLIST_FILE_TYPE = FILE_TYPE_DASH;
++    private static final int LAST_PLAYLIST_FILE_TYPE = FILE_TYPE_HTTPLIVE;
+ 
+     // Drm file types
+     public static final int FILE_TYPE_FL      = 51;
+@@ -289,7 +288,6 @@ private static boolean isWMVEnabled() {
+         addFileType("MPEG", FILE_TYPE_MP2PS, "video/mp2p");
+         addFileType("DIVX", FILE_TYPE_DIVX, "video/divx");
+         addFileType("FLV", FILE_TYPE_FLV, "video/flv");
+-        addFileType("MPD", FILE_TYPE_DASH, "application/dash+xml");
+         addFileType("QCP", FILE_TYPE_QCP, "audio/qcelp");
+         addFileType("AC3", FILE_TYPE_AC3, "audio/ac3");
+         addFileType("EC3", FILE_TYPE_EC3, "audio/eac3");
+diff --git a/media/jni/android_media_MediaPlayer.cpp b/media/jni/android_media_MediaPlayer.cpp
+index 5bc45ffb4b4b..2fb1a3b9fbcf 100644
+--- a/media/jni/android_media_MediaPlayer.cpp
++++ b/media/jni/android_media_MediaPlayer.cpp
+@@ -49,7 +49,6 @@
+ #include <gui/Surface.h>
+ #include <binder/IPCThreadState.h>
+ #include <binder/IServiceManager.h>
+-#include <dlfcn.h>
+ 
+ #include "android_util_Binder.h"
+ // ----------------------------------------------------------------------------
+@@ -138,153 +137,6 @@ void JNIMediaPlayerListener::notify(int msg, int ext1, int ext2, const Parcel *o
+     }
+ }
+ 
+-
+-static const char *EXTMEDIAJNI_LIB_NAME             = "libextmedia_jni.so";
+-static const char *kCreateJNIExtMediaPlayerListener = "CreateJNIExtMediaPlayerListener";
+-static const char *kCheckExtMedia                   = "checkExtMedia";
+-static const char *kCreateNativeQCMediaPlayer       = "CreateNativeQCMediaPlayer";
+-typedef MediaPlayerListener* (*CreateJNIExtMediaPlayerListenerFn)(JNIEnv *, jobject, jobject, sp<MediaPlayerListener> listener);
+-typedef bool (*CheckExtMediaFn)(JNIEnv *env, jobject);
+-typedef MediaPlayer* (*CreateNativeQCMediaPlayerFn)();
+-
+-
+-
+-class JNIMediaPlayerFactory {
+-  public:
+-    JNIMediaPlayerFactory() {};
+-    static bool CheckAndCreateExtMediaPlayer(JNIEnv *env, jobject thiz, jobject weak_this, sp<MediaPlayerListener> &listener, sp<MediaPlayer> &mp);
+-  private:
+-    static void *mLibHandle;
+-    static void loadLib();
+-
+-    static CreateJNIExtMediaPlayerListenerFn  loadJNIExtMediaPlayerListener();
+-    static CreateJNIExtMediaPlayerListenerFn sExtDashListnerFnPtr;
+-
+-    static CheckExtMediaFn sExtMediaFn;
+-    static CheckExtMediaFn loadExtMedia();
+-
+-    static CreateNativeQCMediaPlayerFn  sNativeQCMediaPlayerFn;
+-    static CreateNativeQCMediaPlayerFn loadNativeQCMediaPlayer();
+-
+-    static sp<MediaPlayerListener> createExtMediaPlayerListener(JNIEnv *env, jobject thiz, jobject weak_this, sp<MediaPlayerListener> listener);
+-    static bool checkExtMedia(JNIEnv *env, jobject thiz);
+-    static void CreateNativeQCMediaPlayer(sp<MediaPlayer> &mp);
+-};
+-
+-void *JNIMediaPlayerFactory::mLibHandle = NULL;
+-
+-CreateJNIExtMediaPlayerListenerFn JNIMediaPlayerFactory::sExtDashListnerFnPtr =
+-        JNIMediaPlayerFactory::loadJNIExtMediaPlayerListener();
+-
+-CheckExtMediaFn JNIMediaPlayerFactory::sExtMediaFn =
+-        JNIMediaPlayerFactory::loadExtMedia();
+-
+-CreateNativeQCMediaPlayerFn JNIMediaPlayerFactory::sNativeQCMediaPlayerFn =
+-        JNIMediaPlayerFactory::loadNativeQCMediaPlayer();
+-
+-
+-void JNIMediaPlayerFactory::loadLib()
+-{
+-    if (!mLibHandle) {
+-        mLibHandle = ::dlopen(EXTMEDIAJNI_LIB_NAME, RTLD_LAZY);
+-        if (!mLibHandle) {
+-            ALOGV("%s", dlerror());
+-            return;
+-        }
+-    ALOGV("Opened %s", EXTMEDIAJNI_LIB_NAME);
+-  }
+-}
+-
+-CreateJNIExtMediaPlayerListenerFn JNIMediaPlayerFactory::loadJNIExtMediaPlayerListener()
+-{
+-    loadLib();
+-    CreateJNIExtMediaPlayerListenerFn  pCreateExtDashListnerFnPtr = NULL;
+-    if (mLibHandle != NULL) {
+-        pCreateExtDashListnerFnPtr = (CreateJNIExtMediaPlayerListenerFn)
+-            dlsym(mLibHandle, kCreateJNIExtMediaPlayerListener);
+-        if (pCreateExtDashListnerFnPtr == NULL) {
+-            ALOGW("Failed to load symbol %s : %s", kCreateJNIExtMediaPlayerListener, dlerror());
+-        }
+-    }
+-    return pCreateExtDashListnerFnPtr;
+-}
+-
+-CheckExtMediaFn JNIMediaPlayerFactory::loadExtMedia()
+-{
+-    loadLib();
+-    CheckExtMediaFn pCheckExtMediaFnPtr = NULL;
+-    if (mLibHandle != NULL) {
+-        pCheckExtMediaFnPtr = (CheckExtMediaFn)dlsym(mLibHandle, kCheckExtMedia);
+-        if (pCheckExtMediaFnPtr == NULL) {
+-            ALOGW("Failed to load symbol %s : %s", kCheckExtMedia, dlerror());
+-        }
+-    }
+-    return pCheckExtMediaFnPtr;
+-}
+-
+-CreateNativeQCMediaPlayerFn JNIMediaPlayerFactory::loadNativeQCMediaPlayer()
+-{
+-    loadLib();
+-    CreateNativeQCMediaPlayerFn pCreateNativeQCMediaPlayerFnPtr = NULL;
+-    if (mLibHandle != NULL) {
+-        pCreateNativeQCMediaPlayerFnPtr = (CreateNativeQCMediaPlayerFn)
+-            dlsym(mLibHandle, kCreateNativeQCMediaPlayer);
+-        if (pCreateNativeQCMediaPlayerFnPtr == NULL) {
+-            ALOGW("Failed to load symbol %s : %s", kCreateNativeQCMediaPlayer, dlerror());
+-        }
+-    }
+-    return pCreateNativeQCMediaPlayerFnPtr;
+-}
+-
+-
+-sp<MediaPlayerListener> JNIMediaPlayerFactory::createExtMediaPlayerListener(JNIEnv *env, jobject thiz, jobject weak_this, sp<MediaPlayerListener> listener)
+-{
+-    if (checkExtMedia(env, thiz)) {
+-        if (sExtDashListnerFnPtr ) {
+-            listener = (*sExtDashListnerFnPtr)(env, thiz, weak_this, listener);
+-            if (listener != NULL) {
+-                ALOGE("JNIMediaPlayerFactory: createExtMediaPlayerListener : success");
+-            }
+-        }
+-    }
+-    return listener;
+-}
+-
+-void JNIMediaPlayerFactory::CreateNativeQCMediaPlayer(sp<MediaPlayer> &mp)
+-{
+-    if (sNativeQCMediaPlayerFn) {
+-        mp = (*sNativeQCMediaPlayerFn)();
+-        if (mp != NULL) {
+-            ALOGE("JNIMediaPlayerFactory:  CreateNativeQCMediaPlayer : Success");
+-        }
+-    }
+-}
+-
+-
+-bool JNIMediaPlayerFactory::checkExtMedia(JNIEnv *env, jobject thiz)
+-{
+-    bool bIsQCMediaPlayerPresent = false;
+-    if (sExtMediaFn) {
+-        bIsQCMediaPlayerPresent = (*sExtMediaFn)(env, thiz);
+-    }
+-    ALOGE("JNIMediaPlayerFactory: bIsQCMediaPlayerPresent %d", bIsQCMediaPlayerPresent);
+-    return bIsQCMediaPlayerPresent;
+-}
+-
+-bool JNIMediaPlayerFactory::CheckAndCreateExtMediaPlayer(
+-         JNIEnv *env, jobject thiz, jobject weak_this, sp<MediaPlayerListener> &listener, sp<MediaPlayer> &mp)
+-{
+-    bool bOk = false;
+-    listener = createExtMediaPlayerListener(env, thiz, weak_this, listener);
+-    if (listener != NULL && checkExtMedia(env,thiz)) {
+-        CreateNativeQCMediaPlayer(mp);
+-        if (mp != NULL) {
+-            bOk = true;
+-        }
+-    }
+-    return bOk;
+-}
+-
+ // ----------------------------------------------------------------------------
+ 
+ static sp<MediaPlayer> getMediaPlayer(JNIEnv* env, jobject thiz)
+@@ -1016,26 +868,14 @@ static void
+ android_media_MediaPlayer_native_setup(JNIEnv *env, jobject thiz, jobject weak_this)
+ {
+     ALOGV("native_setup");
+-
+-    sp<MediaPlayer> mp = NULL;
+-
+-    bool bOk = false;
+-    JNIMediaPlayerFactory *jniMediaPlayerFactory = new JNIMediaPlayerFactory();
+-
+-    sp<MediaPlayerListener> listener = new JNIMediaPlayerListener(env, thiz, weak_this);
+-
+-    if (jniMediaPlayerFactory) {
+-        bOk = jniMediaPlayerFactory->CheckAndCreateExtMediaPlayer(env, thiz, weak_this, listener, mp);
+-        delete(jniMediaPlayerFactory);
+-    }
+-
+-    if (!bOk){
+-        mp = new MediaPlayer();
+-    }
++    sp<MediaPlayer> mp = new MediaPlayer();
+     if (mp == NULL) {
+         jniThrowException(env, "java/lang/RuntimeException", "Out of memory");
+         return;
+     }
++
++    // create new listener and give it to MediaPlayer
++    sp<JNIMediaPlayerListener> listener = new JNIMediaPlayerListener(env, thiz, weak_this);
+     mp->setListener(listener);
+ 
+     // Stow our new C++ MediaPlayer in an opaque field in the Java object.
+
+From 4d8984b0d585da2bd6b7205ec3194cd4ba513567 Mon Sep 17 00:00:00 2001
+From: LineageOS-MTK <luzejij@binka.me>
+Date: Mon, 9 Oct 2017 23:54:00 +0300
+Subject: [PATCH 14/14] Fix BatteryStatsService
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Исправляет ошибки:
+BatteryStatsService: Timeout reading modem stats
+BatteryStatsService: power: Missing API
+---
+ .../com/android/server/am/BatteryStatsService.java   | 12 ------------
+ .../com_android_server_am_BatteryStatsService.cpp    |  6 ------
+ 2 files changed, 18 deletions(-)
+
+diff --git a/services/core/java/com/android/server/am/BatteryStatsService.java b/services/core/java/com/android/server/am/BatteryStatsService.java
+index e6241c50375f..9d0c338bdfa0 100644
+--- a/services/core/java/com/android/server/am/BatteryStatsService.java
++++ b/services/core/java/com/android/server/am/BatteryStatsService.java
+@@ -1442,7 +1442,6 @@ private WifiActivityEnergyInfo extractDelta(WifiActivityEnergyInfo latest) {
+     void updateExternalStatsSync(final String reason, int updateFlags) {
+         SynchronousResultReceiver wifiReceiver = null;
+         SynchronousResultReceiver bluetoothReceiver = null;
+-        SynchronousResultReceiver modemReceiver = null;
+ 
+         synchronized (mExternalStatsLock) {
+             if (mContext == null) {
+@@ -1478,11 +1477,6 @@ void updateExternalStatsSync(final String reason, int updateFlags) {
+                 if (mTelephony == null) {
+                     mTelephony = TelephonyManager.from(mContext);
+                 }
+-
+-                if (mTelephony != null) {
+-                    modemReceiver = new SynchronousResultReceiver();
+-                    mTelephony.requestModemActivityInfo(modemReceiver);
+-                }
+             }
+ 
+             WifiActivityEnergyInfo wifiInfo = null;
+@@ -1500,12 +1494,6 @@ void updateExternalStatsSync(final String reason, int updateFlags) {
+                 Slog.w(TAG, "Timeout reading bt stats");
+             }
+ 
+-            try {
+-                modemInfo = awaitControllerInfo(modemReceiver);
+-            } catch (TimeoutException e) {
+-                Slog.w(TAG, "Timeout reading modem stats");
+-            }
+-
+             synchronized (mStats) {
+                 mStats.addHistoryEventLocked(
+                         SystemClock.elapsedRealtime(),
+diff --git a/services/core/jni/com_android_server_am_BatteryStatsService.cpp b/services/core/jni/com_android_server_am_BatteryStatsService.cpp
+index ecdc71e61270..daa6444cc900 100644
+--- a/services/core/jni/com_android_server_am_BatteryStatsService.cpp
++++ b/services/core/jni/com_android_server_am_BatteryStatsService.cpp
+@@ -191,12 +191,6 @@ static jint getPlatformLowPowerStats(JNIEnv* env, jobject /* clazz */, jobject o
+         goto error;
+     }
+ 
+-    if (! (gPowerModule->get_platform_low_power_stats && gPowerModule->get_number_of_platform_modes
+-       && gPowerModule->get_voter_list)) {
+-        ALOGE("%s: Missing API", POWER_HARDWARE_MODULE_ID);
+-        goto error;
+-    }
+-
+     if (gPowerModule->get_number_of_platform_modes) {
+         num_modes = gPowerModule->get_number_of_platform_modes(gPowerModule);
+     }
+
+
