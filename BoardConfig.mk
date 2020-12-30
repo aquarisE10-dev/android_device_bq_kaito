@@ -72,7 +72,7 @@ BOARD_CUSTOM_BOOTIMG := true
 BOARD_MKBOOTIMG_ARGS := --kernel_offset 0x00008000 --ramdisk_offset 0x01000000 --second_offset 0x00f00000 --tags_offset 0x00000100
 
 # Recovery
-TARGET_RECOVERY_FSTAB := $(LOCAL_PATH)/rootdir/twrp.fstab
+TARGET_RECOVERY_FSTAB := $(LOCAL_PATH)/rootdir/recovery.fstab
 TARGET_USE_CUSTOM_LUN_FILE_PATH := "/sys/devices/platform/mt_usb/musb-hdrc.0/gadget/lun0/file"
 DEVICE_RESOLUTION := 1200x1920
 TARGET_SCREEN_HEIGHT := 1920
