@@ -2,7 +2,7 @@
 -include vendor/bq/kaito/BoardConfigVendor.mk
 
 # DEVICE PATH
-DEVICE_PATH := device/bq/katio
+DEVICE_PATH := device/bq/kaito
 
 # GPS
 TARGET_SPECIFIC_HEADER_PATH := $(DEVICE_PATH)/include
