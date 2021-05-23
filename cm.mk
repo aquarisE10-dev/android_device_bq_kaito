@@ -1,17 +1,17 @@
 ## Specify phone tech before including full_phone
 
 # Release name
-PRODUCT_RELEASE_NAME := K1_turbo
+PRODUCT_RELEASE_NAME := Aquaris E10
 
 # Inherit some common CM stuff.
 $(call inherit-product, vendor/cm/config/common_full_phone.mk)
 
 # Inherit device configuration
-$(call inherit-product, device/kingzone/k1_turbo/device_k1-turbo.mk)
+$(call inherit-product, device/bq/kaito/device.mk)
 
 ## Device identifier. This must come after all inclusions
-PRODUCT_DEVICE := k1_turbo
-PRODUCT_NAME := cm_k1_turbo
-PRODUCT_BRAND := KINGZONE
-PRODUCT_MODEL := K1_turbo
-PRODUCT_MANUFACTURER := KINGZONE
+PRODUCT_DEVICE := kaito
+PRODUCT_NAME := cm_kaito
+PRODUCT_BRAND := bq
+PRODUCT_MODEL := Aquaris E10
+PRODUCT_MANUFACTURER := bq

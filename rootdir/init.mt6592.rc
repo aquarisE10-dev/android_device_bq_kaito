@@ -1,6 +1,9 @@
 import init.mt6592.usb.rc
 import init.modem.rc
 
+on early_property:ro.hardware=*
+    setprop ro.mtk.hardware mt6592
+
 on init
     export LD_PRELOAD /system/lib/libxlog.so
     export EXTERNAL_STORAGE /storage/sdcard0

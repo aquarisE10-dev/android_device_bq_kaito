@@ -1,0 +1,3 @@
+add_lunch_combo cm_kaito-eng
+add_lunch_combo cm_kaito-user
+add_lunch_combo cm_kaito-userdebug

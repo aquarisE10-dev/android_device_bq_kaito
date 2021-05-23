@@ -1,37 +1,22 @@
-# Build
+android_device_bq_kaito
+==============================
+This branch is for building Lollipop based ROMs.
 
-* Working
-  * Dual SIM
-  * Wifi
-  * Bluetooth
-  * Audio
-  * Sensors
-  * Camera (photo and video recording)
-  * GPS
-  * NFC
-  * OTG
-  * Tethering (Wifi, Bluetooth and USB)
+About device:
+=========================================================
+Basic   | Spec Sheet
+-------:|:-------------------------
+CPU     | 1.7Ghz Octa-Core ARM Cortex-A7
+CHIPSET | Mediatek MT6592 1.7 GHz
+GPU     | MediaTek ARM Mali-450 MP4 700Mhz 
+Kernel  | 3.4.67 [Prebuilt]
+Memory  | 2GB
+Shipped Android Version | Android 4.4
+Storage | 16GB
+MicroSD | Yes
+Battery | LiPo 8680 mAh (Non-removable)
+Display | 1200 x 1920 pixels, 10.1" TFT LCD IPS
+Rear Camera  | 8.0 MP
+Front Camera | 5.0 MP
 
-* Compilation
-
-        # repo init -u git://github.com/fire855/android.git -b cm-12.1
-        
-        # repo sync
-        
-        # source build/envsetup.sh
-        
-        # brunch cm_k1_turbo-userdebug
-
-# MTK
-
-Few words about mtk related binaries, services and migration peculiarities.
-
-# Limitations
-
-Services requires root:
-
-`system/core/rootdir/init.rc`
-
-  * surfaceflinger depends on sched_setscheduler calls, unable to change process priority from 'system' user (default user 'system')
-
-  * mediaserver depends on /data/nvram folder access, unable to do voice calls from 'media' user (default user 'media')
+![kaito](https://github.com/jmpfbmx/device_pics/blob/master/kaito.jpg)
