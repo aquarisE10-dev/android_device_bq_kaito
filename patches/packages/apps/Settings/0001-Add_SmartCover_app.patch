@@ -1,0 +1,43 @@
+From 5491deb11f9d6b7daf29631e873ce2a1fa23bcf6 Mon Sep 17 00:00:00 2001
+From: fire855 <thefire855@gmail.com>
+Date: Sun, 20 Sep 2015 00:38:36 +0200
+Subject: [PATCH] Add SmartCover app
+
+Change-Id: I3e94573198906ba9c1e861453a5306d963c5bf14
+---
+ res/values/strings.xml        | 3 +++
+ res/xml/wireless_settings.xml | 9 +++++++++
+ 2 files changed, 12 insertions(+)
+
+diff --git a/res/values/strings.xml b/res/values/strings.xml
+index c202ecd9ae0..905c2135b6a 100644
+--- a/res/values/strings.xml
++++ b/res/values/strings.xml
+@@ -6061,4 +6061,7 @@
+    <string name="imei_information_summary">IMEI relative information</string>
+    <string name="slot_number">(Slot<xliff:g id="slot_num">%1$d</xliff:g>)</string>
+ 
++   <!-- Smart Cover settings -->
++   <string name="smart_cover_settings">Smart Cover</string>
++
+ </resources>
+diff --git a/res/xml/wireless_settings.xml b/res/xml/wireless_settings.xml
+index 45f50063608..9496336ea8b 100644
+--- a/res/xml/wireless_settings.xml
++++ b/res/xml/wireless_settings.xml
+@@ -91,4 +91,13 @@
+             android:targetClass="com.android.cellbroadcastreceiver.CellBroadcastSettings" />
+     </PreferenceScreen>
+ 
++    <PreferenceScreen
++        android:key="smart_cover_settings"
++        android:title="@string/smart_cover_settings" >
++        <intent
++            android:action="android.intent.action.MAIN"
++            android:targetPackage="de.fire855.smartcover"
++            android:targetClass="de.fire855.smartcover.SettingsActivity" />
++    </PreferenceScreen>
++
+ </PreferenceScreen>
+
+

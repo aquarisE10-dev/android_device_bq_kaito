@@ -1,0 +1,33 @@
+From 32adf618d34a4e4c7d437e433754e3cf7dce3e30 Mon Sep 17 00:00:00 2001
+From: fire855 <thefire855@gmail.com>
+Date: Wed, 30 Sep 2015 21:10:37 +0200
+Subject: [PATCH] Disable VideoRecordingHints
+
+Change-Id: I12434e2895c7bca774451fc94b9e8d284b3c0561
+---
+ src/com/android/camera/VideoUI.java | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/src/com/android/camera/VideoUI.java b/src/com/android/camera/VideoUI.java
+index 1276c84b89..46b971c6cc 100644
+--- a/src/com/android/camera/VideoUI.java
++++ b/src/com/android/camera/VideoUI.java
+@@ -109,6 +109,7 @@ public VideoUI(CameraActivity activity, VideoController controller, View parent)
+         mAnimationManager = new AnimationManager();
+         mFocusUI = (FocusOverlay) mRootView.findViewById(R.id.focus_overlay);
+         mVideoHints = (VideoRecordingHints) mRootView.findViewById(R.id.video_shooting_hints);
++        mVideoHints.setVisibility(View.INVISIBLE);
+     }
+ 
+     public void setPreviewSize(int width, int height) {
+@@ -259,7 +260,7 @@ public void showFocusUI(boolean show) {
+      * @param show shows video recording hints when true, hides it otherwise.
+      */
+     public void showVideoRecordingHints(boolean show) {
+-        mVideoHints.setVisibility(show ? View.VISIBLE : View.INVISIBLE);
++        //mVideoHints.setVisibility(show ? View.VISIBLE : View.INVISIBLE);
+     }
+ 
+     /**
+
+

@@ -1,0 +1,38 @@
+From 0dfe7f20cafcbe75224685870c0eb6a9fbd55237 Mon Sep 17 00:00:00 2001
+From: fire855 <thefire855@gmail.com>
+Date: Sun, 3 Jan 2016 19:16:12 +0100
+Subject: [PATCH] Remove usb connected check (fix only charging mode)
+
+---
+ .../android/settings/deviceinfo/UsbSettings.java  | 15 +++------------
+ 1 file changed, 3 insertions(+), 12 deletions(-)
+
+diff --git a/src/com/android/settings/deviceinfo/UsbSettings.java b/src/com/android/settings/deviceinfo/UsbSettings.java
+index 3528383b477..7eb66d3ecc8 100644
+--- a/src/com/android/settings/deviceinfo/UsbSettings.java
++++ b/src/com/android/settings/deviceinfo/UsbSettings.java
+@@ -78,19 +78,10 @@
+         public void onReceive(Context context, Intent intent) {
+             String action = intent.getAction();
+             if (action.equals(UsbManager.ACTION_USB_STATE)) {
+-               mUsbAccessoryMode = intent.getBooleanExtra(UsbManager.USB_FUNCTION_ACCESSORY, false);
++                mUsbAccessoryMode = intent.getBooleanExtra(UsbManager.USB_FUNCTION_ACCESSORY, false);
+                 Log.e(TAG, "UsbAccessoryMode " + mUsbAccessoryMode);
+-                boolean connected = intent.getExtras().getBoolean(UsbManager.USB_CONNECTED);
+-                if (!connected) {
+-                    Toast.makeText(getActivity(), R.string.usb_not_connected,
+-                                   Toast.LENGTH_SHORT).show();
+-                    finish();
+-                    return;
+-                } else {
+-                    // once USB connected again, we take setting operation as completed
+-                    mOperationInProgress = false;
+-                    updateUsbFunctionState();
+-                }
++                mOperationInProgress = false;
++                updateUsbFunctionState();
+             }
+         }
+     };
+
+

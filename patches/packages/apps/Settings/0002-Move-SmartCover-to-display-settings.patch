@@ -1,0 +1,54 @@
+From 3ae06aee6e124866d1026729200c4794496ed8c3 Mon Sep 17 00:00:00 2001
+From: fire855 <thefire855@gmail.com>
+Date: Tue, 30 Nov 2021 20:52:34 +0100
+Subject: [PATCH] Move SmartCover to display settings
+
+Change-Id: Ib99c11ab4cf04fd7fdf112bef14459732cedc09c
+Signed-off-by: jmpfbmx <jmpf.bmx@gmail.com>
+---
+ res/xml/display.xml           | 10 ++++++++++
+ res/xml/wireless_settings.xml |  9 ---------
+ 2 files changed, 10 insertions(+), 9 deletions(-)
+
+diff --git a/res/xml/display.xml b/res/xml/display.xml
+index e6a3847a2..40eb2ccfa 100644
+--- a/res/xml/display.xml
++++ b/res/xml/display.xml
+@@ -113,6 +113,16 @@
+                 android:title="@string/wifi_display_settings_title"
+                 settings:keywords="@string/keywords_display_cast_screen"
+                 android:fragment="com.android.settings.wfd.WifiDisplaySettings" />
++
++        <!-- Smart cover -->
++        <PreferenceScreen
++                android:key="smart_cover_settings"
++                android:title="@string/smart_cover_settings" >
++                <intent
++                    android:action="android.intent.action.MAIN"
++                    android:targetPackage="de.fire855.smartcover"
++                    android:targetClass="de.fire855.smartcover.SettingsActivity" />
++        </PreferenceScreen>
+     </PreferenceCategory>
+ 
+     <PreferenceCategory
+diff --git a/res/xml/wireless_settings.xml b/res/xml/wireless_settings.xml
+index ce3c1852e..54eff5511 100644
+--- a/res/xml/wireless_settings.xml
++++ b/res/xml/wireless_settings.xml
+@@ -97,13 +97,4 @@
+ 
+     </PreferenceCategory>
+ 
+-    <PreferenceScreen
+-        android:key="smart_cover_settings"
+-        android:title="@string/smart_cover_settings" >
+-        <intent
+-            android:action="android.intent.action.MAIN"
+-            android:targetPackage="de.fire855.smartcover"
+-            android:targetClass="de.fire855.smartcover.SettingsActivity" />
+-    </PreferenceScreen>
+-
+ </PreferenceScreen>
+-- 
+2.17.1
+

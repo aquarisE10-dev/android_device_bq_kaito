@@ -1,0 +1,43 @@
+From 14f085a469222dcc2873a163b6b25e3d5df7d565 Mon Sep 17 00:00:00 2001
+From: fire855 <thefire855@gmail.com>
+Date: Fri, 12 Jun 2015 21:52:22 +0200
+Subject: [PATCH] Fix MTK audio lib log spamming
+
+Change-Id: I15209dd0f3ef2f116bc60e7ddc2bf46065551e83
+---
+ liblog/logd_write.c | 20 ++++++++++++++++++++
+ 1 file changed, 20 insertions(+)
+
+diff --git a/liblog/logd_write.c b/liblog/logd_write.c
+index ee10d58044c..13a9fcc15d2 100644
+--- a/liblog/logd_write.c
++++ b/liblog/logd_write.c
+@@ -474,6 +474,26 @@ int __android_log_write(int prio, const char *tag, const char *msg)
+     if (!tag)
+         tag = "";
+ 
++    // Prevent MTK audio libs from spamming in the log
++    if (!strcmp(tag, "AudioMTKFilterManager") ||
++        !strcmp(tag, "AudioMTKFilter") ||
++        !strcmp(tag, "AudioMTKStreamOut") ||
++        !strcmp(tag, "AudioVPWStreamIn") ||
++        !strcmp(tag, "AudioDigitalControl") ||
++        !strcmp(tag, "AudioLoopbackController") ||
++        !strcmp(tag, "AudioMTKVolumeController") ||
++        !strcmp(tag, "AudioDigitalControl") ||
++        !strcmp(tag, "AudioAnalogControl") ||
++        !strcmp(tag, "AudioAfeReg") ||
++        !strcmp(tag, "AudioAnalogReg") ||
++        !strcmp(tag, "AudioPlatformDevice") ||
++        !strcmp(tag, "AudioMachineDevice") ||
++        !strcmp(tag, "MtkAudioLoud") ||
++        !strcmp(tag, "LoopbackManager") ||
++        !strcmp(tag, "AudioInterConnection")) {
++            return 0;
++    }
++
+     /* XXX: This needs to go! */
+     if (!strcmp(tag, "HTC_RIL") ||
+         !strncmp(tag, "RIL", 3) || /* Any log tag with "RIL" as the prefix */
+
+

@@ -1,0 +1,43 @@
+From f19da6845218a7c8e94c01630da53fc5fe4f8f3b Mon Sep 17 00:00:00 2001
+From: fire855 <thefire855@gmail.com>
+Date: Sat, 20 Jun 2015 00:13:14 +0200
+Subject: [PATCH] remove ril service and update permissions
+
+Change-Id: If0e907c72a33333f6aac941082b81156fa9e61f3
+---
+ rootdir/init.rc | 11 ++---------
+ 1 file changed, 2 insertions(+), 9 deletions(-)
+
+diff --git a/rootdir/init.rc b/rootdir/init.rc
+index 029d7deba77..79bee481ef4 100644
+--- a/rootdir/init.rc
++++ b/rootdir/init.rc
+@@ -552,16 +552,9 @@ service debuggerd /system/bin/debuggerd
+ service debuggerd64 /system/bin/debuggerd64
+     class main
+ 
+-service ril-daemon /system/bin/rild
+-    class main
+-    socket rild stream 660 root radio
+-    socket rild-debug stream 660 radio system
+-    user root
+-    group radio cache inet misc audio sdcard_rw qcom_diag log
+-
+ service surfaceflinger /system/bin/surfaceflinger
+     class core
+-    user system
++    user root
+     group graphics drmrpc
+     onrestart restart zygote
+ 
+@@ -572,7 +565,7 @@ service drm /system/bin/drmserver
+ 
+ service media /system/bin/mediaserver
+     class main
+-    user media
++    user root
+     group audio camera inet net_bt net_bt_admin net_bw_acct drmrpc mediadrm qcom_diag
+     ioprio rt 4
+ 
+
+

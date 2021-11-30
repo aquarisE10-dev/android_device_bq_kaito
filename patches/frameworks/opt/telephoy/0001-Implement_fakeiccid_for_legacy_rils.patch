@@ -1,0 +1,103 @@
+From a05f170db6b480531de4853c843adae25594a6e0 Mon Sep 17 00:00:00 2001
+From: fire855 <thefire855@gmail.com>
+Date: Thu, 11 Jun 2015 18:01:25 +0200
+Subject: [PATCH] Implement fakeiccid for legacy rils (1/2) Original:
+ https://github.com/bauner/cm-android_frameworks_opt_telephony/commit/3d55b77b75da6d0beaf3324112d46008ed4df773
+
+Change-Id: I6898d47a3ceef6a3eaefdc9cc39d3de4f1f9c2dc
+---
+ .../internal/telephony/SubscriptionInfoUpdater.java    |  2 +-
+ .../android/internal/telephony/uicc/IccConstants.java  |  3 +++
+ .../internal/telephony/uicc/IccFileHandler.java        |  4 ++++
+ .../android/internal/telephony/uicc/RuimRecords.java   | 10 +++++++---
+ .../android/internal/telephony/uicc/SIMRecords.java    | 10 +++++++---
+ 5 files changed, 22 insertions(+), 7 deletions(-)
+
+diff --git a/src/java/com/android/internal/telephony/SubscriptionInfoUpdater.java b/src/java/com/android/internal/telephony/SubscriptionInfoUpdater.java
+index 95f805e5cc..a8063740a5 100644
+--- a/src/java/com/android/internal/telephony/SubscriptionInfoUpdater.java
++++ b/src/java/com/android/internal/telephony/SubscriptionInfoUpdater.java
+@@ -225,7 +225,7 @@ public void handleMessage(Message msg) {
+                         mIccId[slotId] = ICCID_STRING_FOR_NO_SIM;
+                     }
+                 } else {
+-                    mIccId[slotId] = ICCID_STRING_FOR_NO_SIM;
++                    mIccId[slotId] = mFh[slotId].needsFakeIccid() ? IccConstants.FAKE_ICCID : ICCID_STRING_FOR_NO_SIM;
+                     logd("Query IccId fail: " + ar.exception);
+                 }
+                 logd("mIccId[" + slotId + "] = " + mIccId[slotId]);
+diff --git a/src/java/com/android/internal/telephony/uicc/IccConstants.java b/src/java/com/android/internal/telephony/uicc/IccConstants.java
+index facc91812a..8916449793 100644
+--- a/src/java/com/android/internal/telephony/uicc/IccConstants.java
++++ b/src/java/com/android/internal/telephony/uicc/IccConstants.java
+@@ -112,4 +112,7 @@
+ 
+     //UICC access
+     static final String DF_ADF = "7FFF";
++
++    //CM-Specific : Fake ICCID
++    static final String FAKE_ICCID = "00000000000001";
+ }
+diff --git a/src/java/com/android/internal/telephony/uicc/IccFileHandler.java b/src/java/com/android/internal/telephony/uicc/IccFileHandler.java
+index 24d948cc4c..1e8c526b05 100644
+--- a/src/java/com/android/internal/telephony/uicc/IccFileHandler.java
++++ b/src/java/com/android/internal/telephony/uicc/IccFileHandler.java
+@@ -752,6 +752,10 @@ protected String getCommonIccEFPath(int efid) {
+         return null;
+     }
+ 
++    public boolean needsFakeIccid() {
++        return mCi.needsOldRilFeature("fakeiccid");
++    }
++
+     protected abstract String getEFPath(int efid);
+     protected abstract void logd(String s);
+ 
+diff --git a/src/java/com/android/internal/telephony/uicc/RuimRecords.java b/src/java/com/android/internal/telephony/uicc/RuimRecords.java
+index b7edcec2d0..39956307e7 100644
+--- a/src/java/com/android/internal/telephony/uicc/RuimRecords.java
++++ b/src/java/com/android/internal/telephony/uicc/RuimRecords.java
+@@ -723,11 +723,15 @@ public void handleMessage(Message msg) {
+                 data = (byte[])ar.result;
+ 
+                 if (ar.exception != null) {
+-                    break;
++                    if(mFh.needsFakeIccid()) {
++                        mIccId = FAKE_ICCID;
++                    } else {
++                        break;
++                    }
++                } else {
++                    mIccId = IccUtils.bcdToString(data, 0, data.length);
+                 }
+ 
+-                mIccId = IccUtils.bcdToString(data, 0, data.length);
+-
+                 log("iccid: " + mIccId);
+ 
+             break;
+diff --git a/src/java/com/android/internal/telephony/uicc/SIMRecords.java b/src/java/com/android/internal/telephony/uicc/SIMRecords.java
+index 65139d54a3..1e45808ecb 100644
+--- a/src/java/com/android/internal/telephony/uicc/SIMRecords.java
++++ b/src/java/com/android/internal/telephony/uicc/SIMRecords.java
+@@ -880,11 +880,15 @@ public void handleMessage(Message msg) {
+                 data = (byte[])ar.result;
+ 
+                 if (ar.exception != null) {
+-                    break;
++                    if(mFh.needsFakeIccid()) {
++                        mIccId = FAKE_ICCID;
++                    } else {
++                        break;
++                    }
++                } else {
++                    mIccId = IccUtils.bcdToString(data, 0, data.length);
+                 }
+ 
+-                mIccId = IccUtils.bcdToString(data, 0, data.length);
+-
+                 log("iccid: " + mIccId);
+ 
+             break;
+
+
